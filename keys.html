@@ -114,130 +114,270 @@ table { width: 100%; border-collapse: collapse; font-size: 0.8em; margin-top: 20
 th, td { border: 1px solid #555; padding: 5px; text-align: left; }
 th { background: #333; }
 
-input, select { margin: 5px 0; padding: 5px; width: 100%; color: black; }</style><script role="script" id="twine-user-script" type="text/twine-javascript">// 請替換成你部署後的 GAS 網址
-setup.gasUrl = "https://script.google.com/macros/s/AKfycbwZeUE88RPRV0Fr9rkvxfHMQUnU2PnFfFf8ZSoViYaPGq2-YmUG7FvD8RBZCt7s2amy_Q/exec";
+input, select { margin: 5px 0; padding: 5px; width: 100%; color: black; }
+/* 設定下拉選單與輸入框的顏色 */
+#key-select, #user-purpose {
+    background-color: #ffffff !important; /* 強制白色背景 */
+    color: #333333 !important;           /* 強制深灰色文字 */
+    border: 2px solid #2ecc71 !important; /* 綠色邊框 */
+    border-radius: 5px;
+    padding: 10px;
+    font-size: 16px;
+    width: 100%;
+}
 
+/* 針對選單內的選項進行加強 */
+#key-select option {
+    background-color: #ffffff !important;
+    color: #333333 !important;
+}
 
+/* 調整標題文字顏色，確保在黑底上看得見 */
+#form-area {
+    color: #ffffff; 
+    line-height: 1.8;
+}
 
-// 2. 讀取功能：從雲端抓取鑰匙狀態與紀錄
+/* 借用人顯示區的樣式 */
+.user-display-box {
+    padding: 10px; 
+    background: #444; 
+    border-radius: 5px; 
+    margin: 10px 0; 
+    color: #2ecc71; 
+    font-weight: bold;
+    border: 1px solid #555;
+}
+/* 初次登記頁面的輸入框樣式 */
+#new-user-name {
+    background-color: #ffffff !important; /* 強制背景為白色 */
+    color: #000000 !important;           /* 強制文字為黑色 */
+    border: 2px solid #2ecc71 !important; /* 綠色邊框 */
+    padding: 12px !important;
+    font-size: 1.1em !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+    border-radius: 5px !important;
+    margin-bottom: 10px !important;
+}
+
+/* 當滑鼠點擊輸入框時的發光效果 */
+#new-user-name:focus {
+    outline: none !important;
+    box-shadow: 0 0 8px rgba(46, 204, 113, 0.6) !important;
+    border-color: #27ae60 !important;
+}
+
+/* 讓 placeholder (提示文字) 顏色稍微淡一點 */
+#new-user-name::placeholder {
+    color: #888888 !important;
+}</style><script role="script" id="twine-user-script" type="text/twine-javascript">/**
+ * 大灣高中鑰匙管理系統 - Story JavaScript 最終整合版
+ * 功能：Google 帳號介接、初次登入註冊、雲端同步
+ */
+
+// -----------------------------------------------------------
+// 1. 基礎變數初始化 (接收從 Code.gs 傳入的全域變數)
+// -----------------------------------------------------------
+setup.authUserEmail = window.GAS_USER_EMAIL || "Guest";
+setup.authUserName = window.GAS_USER_NAME || ""; // 如果是空字串，代表該使用者尚未登記姓名
+
+// -----------------------------------------------------------
+// 2. 雲端讀取功能 (Load Data)
+// -----------------------------------------------------------
 setup.loadFromGas = function() {
-    return fetch(setup.gasUrl, {
-        method: "POST",
-        body: JSON.stringify({ method: "load" })
-    })
-    .then(function(res) { return res.json(); })
-    .then(function(data) {
-        let currentStatus = {};
+    return new Promise(function(resolve, reject) {
+        console.log("正在透過 Google 內部通道讀取鑰匙狀態...");
         
-        // 從 Keys 分頁過濾標題並初始化
-        let cleanKeys = data.keyList.filter(function(name) { 
-            return name && name !== "鑰匙名稱" && name !== ""; 
-        });
-
-        cleanKeys.forEach(function(name) {
-            currentStatus[name] = { status: "可借用", borrower: "" };
-        });
-
-        // 從 Logs 分頁覆蓋最後狀態
-        if (data.logList && data.logList.length > 1) {
-            for (let i = 1; i < data.logList.length; i++) {
-                let row = data.logList[i]; 
-                let name = row[1];
-                if (name && currentStatus[name]) {
-                    currentStatus[name].status = row[4];
-                    currentStatus[name].borrower = row[2];
-                }
-            }
+        if (typeof google === 'undefined' || !google.script) {
+            reject("環境錯誤：請在 GAS 網址下執行。");
+            return;
         }
-        
-        // 存入 Twine 全域變數
-        State.variables.keys = Object.keys(currentStatus).map(function(name) {
-            return { name: name, status: currentStatus[name].status, borrower: currentStatus[name].borrower };
-        });
-        
-        State.variables.logs = data.logList.slice(1).reverse();
-        console.log("資料同步成功", State.variables.keys);
-        return State.variables.keys;
+
+        google.script.run
+            .withSuccessHandler(function(data) {
+                console.log("雲端資料讀取成功:", data);
+
+                if (data && data.error) {
+                    resolve(data); 
+                    return;
+                }
+
+                // 初始化所有鑰匙為「可借用」
+                var currentStatus = {};
+                if (data.keyList) {
+                    data.keyList.forEach(function(name) {
+                        currentStatus[name] = { status: "可借用", borrower: "" };
+                    });
+                }
+
+                // 根據 Logs 紀錄更新最後狀態
+                if (data.logList && data.logList.length > 1) {
+                    for (var i = 1; i < data.logList.length; i++) {
+                        var row = data.logList[i]; 
+                        var name = row[1];
+                        if (name && currentStatus[name]) {
+                            currentStatus[name].status = row[4];
+                            currentStatus[name].borrower = row[2];
+                        }
+                    }
+                }
+
+                // 【效能優化】存入 setup 物件，避免 SugarCube 備份報錯
+                setup.keys = Object.keys(currentStatus).map(function(name) {
+                    return { 
+                        name: name, 
+                        status: currentStatus[name].status, 
+                        borrower: currentStatus[name].borrower 
+                    };
+                });
+                
+                setup.logs = data.logList.slice(1).reverse();
+                
+                resolve(setup.keys);
+            })
+            .withFailureHandler(function(err) { 
+                console.error("讀取失敗:", err);
+                reject(err); 
+            })
+            .processData({ method: "load" });
     });
 };
 
-// 3. 儲存功能：將資料送回雲端 (這是你剛才噴錯的地方)
+// -----------------------------------------------------------
+// 3. 雲端儲存功能 (Save/Return Key)
+// -----------------------------------------------------------
 setup.saveToGas = function(keyName, user, action, status) {
-    return fetch(setup.gasUrl, {
-        method: "POST",
-        body: JSON.stringify({
-            method: "save",
-            keyName: keyName,
-            user: user,
-            action: action,
-            status: status
-        })
+    return new Promise(function(resolve, reject) {
+        console.log("正在儲存借還紀錄:", keyName, action);
+        
+        google.script.run
+            .withSuccessHandler(function() { 
+                console.log("紀錄儲存成功");
+                resolve(); 
+            })
+            .withFailureHandler(function(err) { 
+                console.error("儲存失敗:", err);
+                reject(err); 
+            })
+            .processData({
+                method: "save", 
+                keyName: keyName, 
+                user: user, 
+                action: action, 
+                status: status
+            });
     });
 };
-// .</script><tw-passagedata pid="1" name="Start" tags="" position="625,250" size="100,100">&lt;h2 id=&quot;loading-text&quot;&gt;📡 正在連線雲端資料庫...&lt;/h2&gt;
 
-&lt;div id=&quot;main-content&quot; style=&quot;display:none;&quot;&gt;
-    &lt;h2&gt;🔑 鑰匙借還系統 (雲端同步版)&lt;/h2&gt;
-    
-    &lt;div id=&quot;key-area&quot;&gt;&lt;/div&gt;
+// -----------------------------------------------------------
+// 4. 初次使用登記功能 (Register User)
+// -----------------------------------------------------------
+setup.registerUser = function(fullName) {
+    return new Promise(function(resolve, reject) {
+        console.log("正在進行初次使用登記:", fullName);
+        
+        google.script.run
+            .withSuccessHandler(function() { 
+                setup.authUserName = fullName; // 同步本地變數
+                console.log("使用者登記完成");
+                resolve(); 
+            })
+            .withFailureHandler(function(err) { 
+                console.error("登記失敗:", err);
+                reject(err); 
+            })
+            .processData({
+                method: "register",
+                email: setup.authUserEmail,
+                displayName: fullName
+            });
+    });
+};
 
-    &lt;div style=&quot;margin-top: 20px;&quot;&gt;
-        [[➕ 登記借出|BorrowForm]] | [[📜 檢視紀錄|LogPage]]
+// -----------------------------------------------------------
+// 5. 介面美化相關 (可選)
+// -----------------------------------------------------------
+console.log("大灣高中鑰匙系統 - 腳本初始化完成。");</script><tw-passagedata pid="1" name="Start" tags="" position="625,250" size="100,100">&lt;&lt;if setup.authUserName === &quot;&quot; or setup.authUserName === &quot;Guest&quot;&gt;&gt;
+    &lt;div style=&quot;background:#222; padding:30px; border:2px solid #2ecc71; border-radius:10px;&quot;&gt;
+        &lt;h3&gt;👋 您好！這是您第一次使用系統&lt;/h3&gt;
+        &lt;p&gt;請輸入您的 **單位與姓名**&lt;/p&gt;
+        &lt;input type=&quot;text&quot; id=&quot;new-user-name&quot; placeholder=&quot;單位 + 姓名&quot; style=&quot;width:100%; padding:10px; color:black;&quot;&gt;&lt;br&gt;&lt;br&gt;
+        &lt;button id=&quot;reg-btn&quot; style=&quot;width:100%; padding:10px; background:#2ecc71; border:none; color:white; font-weight:bold; cursor:pointer;&quot;&gt;完成登記並進入系統&lt;/button&gt;
     &lt;/div&gt;
+    &lt;&lt;script&gt;&gt;
+        $(document).one(&#39;:passagedisplay&#39;, function() {
+            $(&#39;#reg-btn&#39;).on(&#39;click&#39;, function() {
+                var name = $(&#39;#new-user-name&#39;).val();
+                if(!name) { alert(&quot;請輸入姓名！&quot;); return; }
+                $(this).prop(&#39;disabled&#39;, true).text(&#39;正在儲存...&#39;);
+                setup.registerUser(name).then(function() {
+                    alert(&quot;登記成功！&quot;);
+                    Engine.play(&quot;Start&quot;); 
+                });
+            });
+        });
+    &lt;&lt;/script&gt;&gt;
+&lt;&lt;else&gt;&gt;
+    &lt;div style=&quot;text-align: right; font-size: 0.85em; color: #aaa; margin-bottom: 10px;&quot;&gt;
+        👤 目前登入：&lt;span style=&quot;color:#2ecc71; font-weight:bold;&quot;&gt;&lt;&lt;print setup.authUserName&gt;&gt;&lt;/span&gt; (&lt;&lt;print setup.authUserEmail&gt;&gt;)
+    &lt;/div&gt;
+
+    &lt;h2 id=&quot;loading-text&quot;&gt;📡 正在讀取雲端資料...&lt;/h2&gt;
+    &lt;div id=&quot;main-content&quot; style=&quot;display:none;&quot;&gt;
+        &lt;h2&gt;🔑 鑰匙借還系統 (大灣高中版)&lt;/h2&gt;
+        &lt;div id=&quot;key-area&quot;&gt;&lt;/div&gt;
+        &lt;div style=&quot;margin-top: 30px;&quot;&gt;
+            [[➕ 登記借出|BorrowForm]] | [[📜 檢視紀錄|LogPage]]
+        &lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;&lt;script&gt;&gt;
+        setup.loadFromGas().then(data =&gt; {
+            if (data &amp;&amp; data.error) {
+                $(&#39;#loading-text&#39;).html(&#39;&lt;span style=&quot;color:red;&quot;&gt;❌ 伺服器錯誤：&#39; + data.error + &#39;&lt;/span&gt;&#39;);
+                return;
+            }
+            var keys = setup.keys;
+            var html = &#39;&lt;div class=&quot;key-grid&quot;&gt;&#39;;
+            for (var i = 0; i &lt; keys.length; i++) {
+                var k = keys[i];
+                var isBorrowed = (k.status === &quot;借出中&quot;);
+                html += &#39;&lt;div class=&quot;key-card &#39; + (isBorrowed ? &quot;borrowed&quot; : &quot;available&quot;) + &#39;&quot;&gt;&#39;;
+                html += &#39;&lt;span class=&quot;key-name&quot;&gt;&#39; + k.name + &#39;&lt;/span&gt;&#39;;
+                html += &#39;&lt;span&gt;&#39; + (isBorrowed ? &quot;❌ &quot; + k.borrower : &quot;✅ 可借用&quot;) + &#39;&lt;/span&gt;&#39;;
+                if (isBorrowed) {
+                    html += &#39;&lt;br&gt;&lt;button class=&quot;btn-return&quot; data-name=&quot;&#39; + k.name + &#39;&quot; data-user=&quot;&#39; + k.borrower + &#39;&quot;&gt;還鑰匙&lt;/button&gt;&#39;;
+                }
+                html += &#39;&lt;/div&gt;&#39;;
+            }
+            html += &#39;&lt;/div&gt;&#39;;
+            $(&#39;#key-area&#39;).html(html);
+            $(&#39;#loading-text&#39;).hide();
+            $(&#39;#main-content&#39;).show();
+
+            $(&#39;.btn-return&#39;).on(&#39;click&#39;, function() {
+                var name = $(this).data(&#39;name&#39;);
+                var user = $(this).data(&#39;user&#39;);
+                $(this).prop(&#39;disabled&#39;, true).text(&#39;處理中...&#39;);
+                setup.saveToGas(name, user, &quot;歸還&quot;, &quot;可借用&quot;).then(() =&gt; Engine.play(&quot;Start&quot;));
+            });
+        }).catch(err =&gt; {
+            $(&#39;#loading-text&#39;).html(&#39;&lt;span style=&quot;color:red;&quot;&gt;❌ 連線失敗：&#39; + err + &#39;&lt;/span&gt;&#39;);
+        });
+    &lt;&lt;/script&gt;&gt;
+&lt;&lt;/if&gt;&gt;</tw-passagedata><tw-passagedata pid="2" name="BorrowForm" tags="" position="575,375" size="100,100">&lt;h3&gt;📝 登記借出&lt;/h3&gt;
+
+&lt;div id=&quot;form-area&quot;&gt;📡 正在從雲端同步清單...&lt;/div&gt;
+
+&lt;div style=&quot;margin-top: 20px;&quot;&gt;
+    [[取消返回|Start]]
 &lt;/div&gt;
 
 &lt;&lt;script&gt;&gt;
-    setup.loadFromGas().then(() =&gt; {
-        var keys = State.variables.keys;
-        var html = &#39;&lt;div class=&quot;key-grid&quot;&gt;&#39;;
-        
-        for (var i = 0; i &lt; keys.length; i++) {
-            var k = keys[i];
-            var isBorrowed = (k.status === &quot;借出中&quot;);
-            var statusClass = isBorrowed ? &quot;borrowed&quot; : &quot;available&quot;;
-            var statusIcon = isBorrowed ? &quot;❌ &quot; + k.borrower : &quot;✅ 可借用&quot;;
-            
-            html += &#39;&lt;div class=&quot;key-card &#39; + statusClass + &#39;&quot;&gt;&#39;;
-            html += &#39;&lt;span class=&quot;key-name&quot;&gt;&#39; + k.name + &#39;&lt;/span&gt;&#39;;
-            html += &#39;&lt;span&gt;&#39; + statusIcon + &#39;&lt;/span&gt;&#39;;
-            
-            if (isBorrowed) {
-                // 改用 class 並存入資料屬性 (data-*)，避免直接寫 onclick
-                html += &#39;&lt;br&gt;&lt;button class=&quot;btn-return&quot; data-name=&quot;&#39; + k.name + &#39;&quot; data-user=&quot;&#39; + k.borrower + &#39;&quot;&gt;還鑰匙&lt;/button&gt;&#39;;
-            }
-            html += &#39;&lt;/div&gt;&#39;;
-        }
-        html += &#39;&lt;/div&gt;&#39;;
-        
-        $(&#39;#key-area&#39;).html(html);
-        $(&#39;#loading-text&#39;).hide();
-        $(&#39;#main-content&#39;).fadeIn();
-
-        // 【核心修正】使用 jQuery 綁定點擊事件
-        $(&#39;.btn-return&#39;).on(&#39;click&#39;, function() {
-            var name = $(this).data(&#39;name&#39;);
-            var user = $(this).data(&#39;user&#39;);
-            
-            $(this).prop(&#39;disabled&#39;, true).text(&#39;處理中...&#39;);
-            
-            // 直接呼叫儲存功能
-            setup.saveToGas(name, user, &quot;歸還&quot;, &quot;可借用&quot;).then(function() {
-                Engine.play(&quot;Start&quot;); // 成功後刷新頁面
-            }).catch(function(err) {
-                alert(&quot;歸還失敗：&quot; + err);
-            });
-        });
-
-    }).catch(err =&gt; {
-        $(&#39;#loading-text&#39;).text(&quot;❌ 同步失敗：&quot; + err);
-    });
-&lt;&lt;/script&gt;&gt;</tw-passagedata><tw-passagedata pid="2" name="BorrowForm" tags="" position="575,375" size="100,100">&lt;h3&gt;📝 登記借出&lt;/h3&gt;
-&lt;div id=&quot;form-area&quot;&gt;📡 正在從雲端同步清單...&lt;/div&gt;
-&lt;div style=&quot;margin-top: 20px;&quot;&gt;[[取消返回|Start]]&lt;/div&gt;
-
-&lt;&lt;script&gt;&gt;
     function renderForm() {
-        var keys = State.variables.keys;
+        var keys = setup.keys;
+        var currentUser = setup.authUserEmail;
         var availableKeys = keys.filter(function(k) { return k.status === &quot;可借用&quot;; });
 
         if (availableKeys.length === 0) {
@@ -245,41 +385,36 @@ setup.saveToGas = function(keyName, user, action, status) {
             return;
         }
 
-        var html = &#39;&lt;div style=&quot;background: #333; padding: 20px; border-radius: 10px;&quot;&gt;&#39;;
-        html += &#39;選擇鑰匙：&lt;br&gt;&lt;select id=&quot;key-select&quot; style=&quot;color:black; width:100%; padding:8px; margin:10px 0;&quot;&gt;&#39;;
+        // 開始組合 HTML
+        var html = &#39;&lt;div style=&quot;text-align:left;&quot;&gt;&#39;;
+        
+        html += &#39;&lt;label&gt;🔑 選擇鑰匙：&lt;/label&gt;&lt;br&gt;&#39;;
+        html += &#39;&lt;select id=&quot;key-select&quot;&gt;&#39;;
         availableKeys.forEach(function(k) {
             html += &#39;&lt;option value=&quot;&#39; + k.name + &#39;&quot;&gt;&#39; + k.name + &#39;&lt;/option&gt;&#39;;
         });
-        html += &#39;&lt;/select&gt;&lt;br&gt;&#39;;
-        html += &#39;借用人姓名：&lt;br&gt;&lt;input type=&quot;text&quot; id=&quot;user-name&quot; style=&quot;color:black; width:100%; padding:8px; margin:10px 0;&quot;&gt;&lt;br&gt;&#39;;
-        html += &#39;用途：&lt;br&gt;&lt;input type=&quot;text&quot; id=&quot;user-purpose&quot; placeholder=&quot;選填&quot; style=&quot;color:black; width:100%; padding:8px; margin:10px 0;&quot;&gt;&lt;br&gt;&lt;br&gt;&#39;;
-        html += &#39;&lt;button id=&quot;submit-btn&quot; style=&quot;width:100%; padding:10px; background:#2ecc71; color:white; border:none; border-radius:5px; cursor:pointer;&quot;&gt;確認借出&lt;/button&gt;&#39;;
+        html += &#39;&lt;/select&gt;&lt;br&gt;&lt;br&gt;&#39;;
+
+        html += &#39;&lt;label&gt;👤 借用人：&lt;/label&gt;&#39;;
+        html += &#39;&lt;div class=&quot;user-display-box&quot;&gt;&#39; + currentUser + &#39;&lt;/div&gt;&lt;br&gt;&#39;;
+        
+        html += &#39;&lt;label&gt;📝 用途：&lt;/label&gt;&lt;br&gt;&#39;;
+        html += &#39;&lt;input type=&quot;text&quot; id=&quot;user-purpose&quot; placeholder=&quot;例如：D208 課程使用&quot;&gt;&lt;br&gt;&lt;br&gt;&#39;;
+        
+        html += &#39;&lt;button id=&quot;submit-btn&quot; style=&quot;width:100%; padding:12px; background:#2ecc71; color:white; border:none; border-radius:5px; cursor:pointer; font-weight:bold; font-size:1.1em;&quot;&gt;確認登記借出&lt;/button&gt;&#39;;
         html += &#39;&lt;/div&gt;&#39;;
 
         $(&#39;#form-area&#39;).html(html);
 
+        // 按鈕邏輯保持不變
         $(&#39;#submit-btn&#39;).on(&#39;click&#39;, function() {
             var kName = $(&#39;#key-select&#39;).val();
-            var uName = $(&#39;#user-name&#39;).val();
-            var uPurp = $(&#39;#user-purpose&#39;).val() || &quot;未註明&quot;;
-
-            if(!uName) { alert(&quot;請輸入姓名！&quot;); return; }
-
-            $(this).prop(&#39;disabled&#39;, true).text(&#39;上傳中...&#39;);
-
-            // 呼叫 Story JavaScript 裡定義的 saveToGas
-            setup.saveToGas(kName, uName, &quot;借出 (&quot;+uPurp+&quot;)&quot;, &quot;借出中&quot;)
-            .then(function() {
-                console.log(&quot;儲存成功，準備跳轉&quot;);
-                Engine.play(&quot;Start&quot;);
-            })
-            .catch(function(err) {
-                alert(&quot;雲端儲存失敗：&quot; + err);
-                $(&#39;#submit-btn&#39;).prop(&#39;disabled&#39;, false).text(&#39;確認借出&#39;);
-            });
+            var uPurp = $(&#39;#user-purpose&#39;).val() || &quot;一般借用&quot;;
+            $(this).prop(&#39;disabled&#39;, true).text(&#39;正在上傳雲端...&#39;);
+            setup.saveToGas(kName, currentUser, &quot;借出 (&quot; + uPurp + &quot;)&quot;, &quot;借出中&quot;)
+            .then(function() { Engine.play(&quot;Start&quot;); });
         });
     }
-
     setup.loadFromGas().then(renderForm);
 &lt;&lt;/script&gt;&gt;</tw-passagedata><tw-passagedata pid="3" name="LogPage" tags="" position="687.5,375" size="100,100">&lt;h3&gt;📜 最近借還紀錄&lt;/h3&gt;
 
@@ -299,7 +434,7 @@ setup.saveToGas = function(keyName, user, action, status) {
 
     function renderLogs() {
         clearTimeout(timeout); // 成功抓到資料，取消超時檢查
-        var logs = State.variables.logs;
+        var logs = setup.logs;
         
         if (!logs || logs.length === 0) {
             $(&#39;#log-area&#39;).html(&#39;&lt;p style=&quot;color:#aaa;&quot;&gt;目前尚無任何借還紀錄。&lt;/p&gt;&#39;);
